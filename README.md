@@ -1,100 +1,105 @@
-In order to make sure the files are not overwritten, I used extensions at the end of the files and keep track of files ingested in two text files, ingestedfiles.txt and test_files.txt . The final concatenated files are kept track in train_data_version.txt and test_data_versions.txt . 
+# Risk Assessment: Churn Prediction with Automated Retraining
 
-First,
+A logistic regression model that predicts whether a company will churn (`exited`) from three
+features: `lastmonth_activity`, `lastyear_activity`, and `number_of_employees`. Around the model,
+this repo builds the full lifecycle of a production ML system: data ingestion, training, scoring,
+deployment, diagnostics, reporting, and a Flask API, plus an automated loop that detects model
+drift on new data and retrains when the score drops.
 
-  run firstRun.py
-  
-    -- this will ingest existing data then concatenate dataframes --> 
-    
-    from practicedata/ and save it in ingesteddata/finaldata2.csv 
-    
-    -- run training.py a logistic regression model -->
-    
-    practicemodels/trainedmodel.sav and practicemodels/scaler.sav  and ingesteddata/train_data_version.txt 
-    
-    -- run scoring.py the model on test dataset -->
-    
-    practicemodels/latestscore.txt \n
-    
-    -- run deployment.py it --> 
-    
-    copy data from practicemodels/ to production_deployment and models \n
-    
-    -- run diagnostics.py --> 
-    
-    reads in from ingesteddata/train_data_version.txt and statistics from practicemodels/
-    
-    -- run reporting.py --> 
-    
-    saves practicemodels/confusionmatrix.png using the model from practicemodels/
+The datasets are small fabricated company records, so the repo is best read as a working template
+for ML model operations rather than a production model.
 
-Second,
+## Repository structure
 
-  run fullprocess.py
-  
-    -- Reads in the existing ingested files text files, and check to see if there are any new files added.
-    
-    -- If no new data is added (from sourcedata/), it will ingest them using ingestion.py --> 
-    
-    this will ingesteddata/finaldata4.csv as well as a new test dataset called testdata/testdata_new.csv and update test_data_versions.txt and train_data_version.txt
-    
-    -- It will then read the latestscore.txt from last step and if the score on the new test dataset is less than the score from last step, it will train a new model on the new ingested training data, ingesteddata/finaldata4.csv and redploy it.
-    
-    -- It will then diagnostics.py and reporting.py as well as apicalls.py (app.py should have been ran before hand.)
+- `ingestion.py` - Merges source CSVs into one deduplicated dataset and records which files were
+  ingested so repeated runs only pick up new data.
+- `training.py` - Trains the logistic regression and saves `trainedmodel.sav` plus `scaler.sav`.
+- `data_prep.py` - Shared feature extraction and scaling used by training, scoring, reporting,
+  diagnostics, and the API.
+- `scoring.py` - Scores the trained model on the test data (F1 score) and writes
+  `latestscore.txt`.
+- `deployment.py` - Copies the model, scaler, score, and ingest record into
+  `production_deployment/`.
+- `diagnostics.py` - Model predictions, dataset summary statistics, ingestion/training timings,
+  and a check for outdated Python packages. Writes `req_versions.csv`.
+- `reporting.py` - Plots and saves a confusion matrix for the model on the test data.
+- `app.py` - Flask API with endpoints for predictions, scoring, summary stats, and diagnostics.
+- `wsgi.py` - WSGI entry point for serving the API with a production server such as gunicorn.
+- `apicalls.py` - Calls every API endpoint and saves the combined responses to
+  `apireturns.txt`.
+- `firstRun.py` - Runs the whole pipeline once on the practice data (ingest, train, score,
+  deploy, diagnostics, report).
+- `fullprocess.py` - The automated loop: checks for new source data, ingests it, scores the
+  deployed model on it, and retrains plus redeploys when the score drops. Meant to run on a
+  schedule (see `cron.txt` / `cronjob.txt`).
+- `eda.ipynb` - Notebook that scores the model and exercises the live API.
+- `config.json` - Path configuration (input data, ingested data, test data, models, deployment).
+- `requirements.txt` - Pinned Python dependencies (the canonical dependency list).
 
+Data and artifact directories: `sourcedata/`, `practicedata/`, `ingesteddata/`, `testdata/`,
+`models/`, `practicemodels/`, `production_deployment/`.
 
+Note on `requirements_installed.txt`: this file is not a second dependency list. It is the
+output snapshot that `diagnostics.py` regenerates from `pip list --outdated` every time the
+outdated-packages check runs. Treat it as a report, not as something to install from.
 
-/practicedata/. This is a directory that contains some data you can use for practice.
+## How to run it
 
-/sourcedata/. This is a directory that contains data that you'll load to train your models.
+Install dependencies (Python 3.8+ recommended, matching the pinned versions):
 
-/ingesteddata/. This is a directory that will contain the compiled datasets after your ingestion script.
+```
+pip install -r requirements.txt
+```
 
-/testdata/. This directory contains data you can use for testing your models.
+Run the full pipeline once on the practice data:
 
-/models/. This is a directory that will contain ML models that you create for production.
+```
+python firstRun.py
+```
 
-/practicemodels/. This is a directory that will contain ML models that you create as practice.
+Start the API (from the repo root, in a separate terminal):
 
-/production_deployment/. This is a directory that will contain your final, deployed models.
+```
+python app.py
+```
 
-Starter Files
-There are many files in the starter: 10 Python scripts, one configuration file, one requirements file, and five datasets.
+Then check the endpoints, for example:
 
-The following are the Python files that are in the starter files:
+```
+curl "http://127.0.0.1:8000/scoring"
+curl "http://127.0.0.1:8000/prediction?filename=finaldata2.csv"
+```
 
-training.py, a Python script meant to train an ML model
+Exercise all endpoints and save the responses:
 
-scoring.py, a Python script meant to score an ML model
+```
+python apicalls.py
+```
 
-deployment.py, a Python script meant to deploy a trained ML model
+Run the automated retraining loop (checks for new data in `sourcedata/` and retrains on drift):
 
-ingestion.py, a Python script meant to ingest new data
+```
+python fullprocess.py
+```
 
-diagnostics.py, a Python script meant to measure model and data diagnostics
+Open `eda.ipynb` for a notebook walkthrough of scoring and the API.
 
-reporting.py, a Python script meant to generate reports about model metrics
+## What you learn from this repo
 
-app.py, a Python script meant to contain API endpoints
+- How to structure an end-to-end ML pipeline so each stage (ingest, train, score, deploy)
+  is a separate, rerunnable script driven by a single `config.json`.
+- How to persist and reuse a feature scaler so training and serving apply identical
+  transformations.
+- How to watch a deployed model for drift: score it on newly arrived data, compare with the
+  recorded score, and retrain automatically when performance drops.
+- How to expose model health through a small API: predictions, scores, data summaries, and
+  timing/dependency diagnostics in one place.
 
-wsgi.py, a Python script to help with API deployment
+## Notes
 
-apicalls.py, a Python script meant to call your API endpoints
-
-fullprocess.py, a script meant to determine whether a model needs to be re-deployed, and to call all other Python scripts when needed
-
-The following are the datasets that are included in your starter files. Each of them is fabricated datasets that have information about hypothetical corporations.
-
-Note: these data have been uploaded to your workspace as well
-
-dataset1.csv and dataset2.csv, found in /practicedata/
-
-dataset3.csv and dataset4.csv, found in /sourcedata/
-
-testdata.csv, found in /testdata/
-
-The following are other files that are included in your starter files:
-
-requirements.txt, a text file and records the current versions of all the modules that your scripts use
-
-config.json, a data file that contains names of files that will be used for configuration of your ML Python scripts
+- `firstRun.py` and `fullprocess.py` rewrite `config.json` when they run, pointing it at the
+  practice or production directories respectively.
+- The Flask session key defaults to a dev-only placeholder; set the `FLASK_SECRET_KEY`
+  environment variable before serving the API anywhere real.
+- Large generated artifacts (`.sav` model files, PNGs, merged CSVs) are committed in this
+  repo so the pipeline outputs can be inspected without rerunning everything.

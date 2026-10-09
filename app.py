@@ -1,58 +1,80 @@
-from flask import Flask, session, jsonify, request
+"""Flask API for the risk assessment model.
+
+Endpoints:
+    /prediction?filename=<csv>  Predict churn on a CSV of company records.
+    /scoring                    F1 score of the deployed model on test data.
+    /summarystats               Summary statistics of the training data.
+    /diagnostics                 Summary stats, timings, and outdated-package info.
+"""
+from flask import Flask, request
 import pandas as pd
-import numpy as np
 import pickle
 import json
 import os
 from scoring import score_model
-from diagnostics import *
+from diagnostics import dataframe_summary, execution_time, outdated_packages_list
+from data_prep import prep_data
+
 
 ######################Set up variables for use in our script
 app = Flask(__name__)
-app.secret_key = '1652d576-484a-49fd-913a-6879acfa6ba4'
+# Session signing key. Set FLASK_SECRET_KEY in the environment for any real
+# deployment; the fallback is a dev-only placeholder and must not be used
+# in production.
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-only-secret-key')
 
-with open('config.json','r') as f:
+with open('config.json', 'r') as f:
     config = json.load(f)
 
 dataset_csv_path = os.path.join(config['output_folder_path'])
 model_path = os.path.join(config['output_model_path'])
 
-prediction_model = pickle.load(open(model_path + '/trainedmodel.sav','rb'))
+prediction_model = pickle.load(open(os.path.join(model_path, 'trainedmodel.sav'), 'rb'))
+scaler = pickle.load(open(os.path.join(model_path, 'scaler.sav'), 'rb'))
+
 
 #######################Prediction Endpoint
-@app.route("/prediction", methods=['GET','OPTIONS'])
+@app.route("/prediction", methods=['GET', 'OPTIONS'])
 def prediction():
-    #call the prediction function you created in Step 3
+    """Predict churn for each row of the requested CSV file.
+
+    Query param:
+        filename: CSV in the ingested data directory.
+
+    Returns the model's predicted labels as a string. Input features are
+    scaled with the same scaler used in training.
+    """
     filename = request.args.get('filename')
-    df =pd.read_csv(dataset_csv_path + '/' +filename)
-    LM_A = list(df['lastmonth_activity'])
-    LY_A = list(df['lastyear_activity'])
-    N_E  = list(df['number_of_employees'])
-    X = np.asarray([LM_A,LY_A,N_E]).T
+    df = pd.read_csv(os.path.join(dataset_csv_path, filename))
+    X, _ = prep_data(df, scaler)
     predictions = prediction_model.predict(X)
-    return str(predictions)#add return value for prediction outputs
+    return str(predictions)
+
 
 #######################Scoring Endpoint
-@app.route("/scoring", methods=['GET','OPTIONS'])
+@app.route("/scoring", methods=['GET', 'OPTIONS'])
 def scoring():
-    #check the score of the deployed model
-    return score_model()#add return value (a single F1 score number)
+    """Return the F1 score of the deployed model on the test data."""
+    return score_model()
+
 
 #######################Summary Statistics Endpoint
-@app.route("/summarystats", methods=['GET','OPTIONS'])
+@app.route("/summarystats", methods=['GET', 'OPTIONS'])
 def summarystats():
-    #check means, medians, and modes for each column
-    return dataframe_summary()#return a list of all calculated summary statistics
+    """Return means, medians, standard deviations, and null shares per column."""
+    return dataframe_summary()
+
 
 #######################Diagnostics Endpoint
-@app.route("/diagnostics", methods=['GET','OPTIONS'])
+@app.route("/diagnostics", methods=['GET', 'OPTIONS'])
 def diagnostics():
-    #check timing and percent NA values
+    """Return summary stats, ingestion/training timings, and outdated packages."""
     summary_stats = dataframe_summary()
     timing = execution_time()
     outdated = outdated_packages_list().values
-    result = [str(summary_stats),str(timing),str(outdated)]
-    return str([result[0],'\n' ,result[1],'\n',result[2]])#add return value for all diagnostics
+    result = [str(summary_stats), str(timing), str(outdated)]
+    return str([result[0], '\n', result[1], '\n', result[2]])
+
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=8000, debug=True, threaded=True)
